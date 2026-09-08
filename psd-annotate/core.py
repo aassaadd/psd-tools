@@ -208,8 +208,9 @@ _PSD_CACHE_LOCK = threading.Lock()
 def _get_cached_psd(doc_id):
     """获取缓存的 PSDImage（LRU 策略）。
 
-    功能：命中缓存则将条目移至队尾（视为最近使用）；未命中则打开 PSD 写入
-        缓存；写入后超过 _PSD_CACHE_MAX 时淘汰最久未使用（队首）的条目。
+    功能：命中缓存则将条目移至队尾（视为最近使用）；未命中则在锁外执行
+        耗时的 PSDImage.open IO（避免阻塞其他线程），随后在锁内二次检查
+        后写入缓存；写入后超过 _PSD_CACHE_MAX 时淘汰最久未使用（队首）条目。
     参数：doc_id —— 文档 id
     返回：PSDImage 对象
     """
@@ -218,11 +219,18 @@ def _get_cached_psd(doc_id):
         if psd is not None:
             _PSD_CACHE.move_to_end(doc_id)
             return psd
-        psd = PSDImage.open(os.path.join(UPLOAD_DIR, doc_id + ".psd"))
-        _PSD_CACHE[doc_id] = psd
+    # 锁外执行耗时的文件打开 IO
+    new_psd = PSDImage.open(os.path.join(UPLOAD_DIR, doc_id + ".psd"))
+    with _PSD_CACHE_LOCK:
+        psd = _PSD_CACHE.get(doc_id)
+        if psd is not None:
+            # 并发期间已有其他线程写入同一 doc_id，复用已有条目
+            _PSD_CACHE.move_to_end(doc_id)
+            return psd
+        _PSD_CACHE[doc_id] = new_psd
         while len(_PSD_CACHE) > _PSD_CACHE_MAX:
             _PSD_CACHE.popitem(last=False)
-        return psd
+        return new_psd
 
 
 def _locate_layer(doc_id, layer_id):
