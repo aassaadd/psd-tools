@@ -6,6 +6,7 @@ import re
 import time
 import uuid
 
+from PIL import Image
 from psd_tools import PSDImage
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -233,6 +234,28 @@ def render_layer_png(doc_id, layer_id):
         img = img.convert("RGBA")
     img.save(out_path)
     return out_path
+
+
+def export_layer_crop(doc_id, layer_id):
+    """从整体效果图中按图层 bbox 裁剪（保留全部叠加/剪贴蒙版语义）。
+    返回 (文件路径, 裁剪原点 offset_x, offset_y)。"""
+    _, tree = load_doc(doc_id)
+    node = find_layer(tree, layer_id)
+    if not node:
+        raise ValueError(f"图层不存在: {layer_id}")
+    comp_path = os.path.join(doc_dir(doc_id), "composite.png")
+    img = Image.open(comp_path)
+    l, t, r, b = node["bbox"]
+    cl, ct = max(0, l), max(0, t)
+    cr, cb = min(img.width, r), min(img.height, b)
+    if cr <= cl or cb <= ct:
+        raise ValueError(f"图层 {node['name']} 完全在画布外，无可裁剪内容")
+    crop = img.crop((cl, ct, cr, cb))
+    cache = os.path.join(doc_dir(doc_id), "crops")
+    os.makedirs(cache, exist_ok=True)
+    p = os.path.join(cache, f"{layer_id}.png")
+    crop.save(p)
+    return p, cl, ct
 
 
 def css_snippet(node):

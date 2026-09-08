@@ -143,5 +143,35 @@ def psd_export_layer(doc_id: str, layer_id: str,
                        "w": node["w"], "h": node["h"]}, ensure_ascii=False, indent=1)
 
 
+@server.tool()
+def psd_export_layer_crop(doc_id: str, layer_id: str,
+                          output_dir: str = "") -> str:
+    """按图层在画布中的 bbox 裁剪整体效果图，导出 PNG。
+    与 psd_export_layer 的区别：保留画布上的全部叠加效果/剪贴蒙版语义，
+    像素与设计稿完全一致，适合 1:1 还原页面。
+    注意：图层被画布边缘裁剪时，返回的 offset 是实际裁剪起点（可能与图层 bbox 不同）。
+    output_dir 为输出目录，默认 ~/Downloads/psd-assets。"""
+    try:
+        _, tree = core.load_doc(doc_id)
+    except FileNotFoundError:
+        return json.dumps({"error": f"文档不存在: {doc_id}"}, ensure_ascii=False)
+    node = core.find_layer(tree, layer_id)
+    if not node:
+        return json.dumps({"error": f"图层不存在: {layer_id}"}, ensure_ascii=False)
+    try:
+        src, ox, oy = core.export_layer_crop(doc_id, layer_id)
+    except ValueError as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+    out_dir = os.path.expanduser(output_dir) if output_dir else \
+        os.path.join(os.path.expanduser("~"), "Downloads", "psd-assets")
+    os.makedirs(out_dir, exist_ok=True)
+    fname = f"{core.safe_name(node['name'])}_{layer_id}_crop.png"
+    dest = os.path.join(out_dir, fname)
+    shutil.copyfile(src, dest)
+    return json.dumps({"saved": dest, "name": node["name"],
+                       "offset_x": ox, "offset_y": oy,
+                       "w": node["w"], "h": node["h"]}, ensure_ascii=False, indent=1)
+
+
 if __name__ == "__main__":
     server.run("stdio")
