@@ -1,27 +1,34 @@
 #!/usr/bin/env bash
 # psd-tools 一键启动脚本
-# 功能：自动停止旧服务 -> 自动创建虚拟环境 -> 按需安装依赖 -> 启动 Flask Web 服务（http://127.0.0.1:8642）
+# 功能：自动停止旧服务 -> 自动创建虚拟环境 -> 按需安装依赖
+#       -> 启动 Flask Web 服务（http://127.0.0.1:8642，前台）
+#       -> 后台启动 MCP 网络服务（http://127.0.0.1:8643/mcp，streamable-http）
 # 用法：./start.sh
 
 set -e
 cd "$(dirname "$0")/psd-annotate"
 
 PORT=8642
+MCP_PORT=8643
 
 # 0. 自动停止：清理占用端口的旧服务进程（先 TERM，不退出再 KILL）
-OLD_PIDS=$(lsof -ti :"$PORT" 2>/dev/null || true)
-if [ -n "$OLD_PIDS" ]; then
-    echo "[停止] 端口 $PORT 被旧服务占用（PID: $OLD_PIDS），正在停止..."
-    kill $OLD_PIDS 2>/dev/null || true
-    sleep 1
-    OLD_PIDS=$(lsof -ti :"$PORT" 2>/dev/null || true)
+stop_port() {
+    # $1 为端口号；停止占用该端口的旧进程
+    OLD_PIDS=$(lsof -ti :"$1" 2>/dev/null || true)
     if [ -n "$OLD_PIDS" ]; then
-        echo "[停止] 进程未响应，强制结束..."
-        kill -9 $OLD_PIDS 2>/dev/null || true
+        echo "[停止] 端口 $1 被旧服务占用（PID: $OLD_PIDS），正在停止..."
+        kill $OLD_PIDS 2>/dev/null || true
         sleep 1
+        OLD_PIDS=$(lsof -ti :"$1" 2>/dev/null || true)
+        if [ -n "$OLD_PIDS" ]; then
+            echo "[停止] 进程未响应，强制结束..."
+            kill -9 $OLD_PIDS 2>/dev/null || true
+            sleep 1
+        fi
     fi
-    echo "[停止] 旧服务已停止"
-fi
+}
+stop_port "$PORT"
+stop_port "$MCP_PORT"
 
 # 1. 准备虚拟环境：不存在则创建
 if [ ! -x .venv/bin/python ]; then
@@ -35,6 +42,11 @@ if ! .venv/bin/python -c "import flask, psd_tools, PIL, aggdraw, mcp" 2>/dev/nul
     .venv/bin/pip install --quiet -r ../requirements.txt
 fi
 
-# 3. 启动 Web 服务（前台运行，Ctrl+C 退出）
+# 3. 后台启动 MCP 网络服务（streamable-http，端点 /mcp）
+echo "[启动] MCP 网络服务运行中：http://127.0.0.1:$MCP_PORT/mcp"
+nohup .venv/bin/python mcp_server.py --http --port "$MCP_PORT" \
+    > /tmp/psd-annotate-mcp.log 2>&1 &
+
+# 4. 启动 Web 服务（前台运行，Ctrl+C 退出；后台 MCP 服务随机器常驻）
 echo "[启动] Web 服务运行中：http://127.0.0.1:$PORT"
 exec .venv/bin/python app.py

@@ -33,7 +33,7 @@ psd-tools
 └── psd-annotate
     ├── app.py           # Flask Web 服务与 HTTP 路由（端口 8642）
     ├── core.py          # PSD 解析核心逻辑（Web 与 MCP 共用）
-    ├── mcp_server.py    # MCP Server（stdio 传输）
+    ├── mcp_server.py    # MCP Server（streamable-http 网络传输，端口 8643；保留 stdio 兜底）
     ├── static
     │   └── index.html   # 前端页面（原生 JS，单文件）
     ├── uploads/         # 上传的 PSD 源文件（按 doc_id 保存，供图层懒渲染）
@@ -59,35 +59,43 @@ psd-tools
 pip install -r requirements.txt
 ```
 
-### 2. 启动网页版
+### 2. 启动服务
 
 ```bash
 ./start.sh
 ```
 
-脚本会自动停止旧服务、创建虚拟环境、按需安装依赖并启动服务。浏览器访问 <http://127.0.0.1:8642>，上传 PSD 即可使用。可重复执行，无需手动清理端口。
+脚本会自动停止旧服务、创建虚拟环境、按需安装依赖，并启动两个服务：
+- 网页版 <http://127.0.0.1:8642>（前台运行，上传 PSD 即可使用）
+- 网络版 MCP `http://127.0.0.1:8643/mcp`（后台常驻，日志 `/tmp/psd-annotate-mcp.log`）
 
-也可以手动启动：
+可重复执行，无需手动清理端口。
+
+也可以手动启动网络版 MCP：
 
 ```bash
 cd psd-annotate
-python app.py
+python mcp_server.py --http --port 8643
 ```
 
 ### 3. 接入 MCP 客户端（可选）
 
-在 Trae / Claude Desktop 等客户端的 MCP 配置中添加：
+网络版 MCP（推荐）：在客户端的 MCP 配置中添加 URL 条目（如 `~/.workbuddy/mcp.json`）：
 
 ```json
 {
   "mcpServers": {
     "psd-annotate": {
-      "command": "python",
-      "args": ["/绝对路径/psd-tools/psd-annotate/mcp_server.py"]
+      "type": "streamableHttp",
+      "url": "http://127.0.0.1:8643/mcp",
+      "timeout": 300000,
+      "disabled": false
     }
   }
 }
 ```
+
+stdio 兜底：也可以让客户端以子进程方式拉起（`command` + `args` 指向 `mcp_server.py`，不带 `--http`）。
 
 配置后即可让 AI 直接解析 PSD、查询图层标注、导出切图。
 

@@ -1,6 +1,6 @@
 # psd-annotate 工具参考
 
-MCP server：`/Users/zhaohaochen/git/psd-tools/psd-annotate/mcp_server.py`（stdio，`python mcp_server.py` 由客户端拉起）。已注册于 `~/.workbuddy/mcp.json`（名称 `psd-annotate`）。
+网络版 MCP：端点 `http://127.0.0.1:8643/mcp`（streamable-http），在 MCP 客户端配置中以 URL 方式接入（名称 `psd-annotate`）。服务端代码为仓库内 `psd-annotate/mcp_server.py`，由仓库根目录 `./start.sh` 拉起（或 `python psd-annotate/mcp_server.py --http --port 8643`）。
 
 ## MCP 工具（7 个）
 
@@ -28,29 +28,8 @@ MCP server：`/Users/zhaohaochen/git/psd-tools/psd-annotate/mcp_server.py`（std
 ### psd_export_layer_crop(doc_id, layer_id, output_dir="")
 按图层 bbox 裁剪整体效果图（composite）。像素与设计稿完全一致，**1:1 还原/页面重建必须用这个**。返回 `{saved, name, offset_x, offset_y, w, h}`；`offset` 是实际裁剪起点——图层被画布边缘裁剪时与 bbox 的 left/top 不同（含负值），定位时用 offset。
 
-## 本地 Python 直调（MCP 未连接时的等价接口）
-
-```python
-import sys
-sys.path.insert(0, "/Users/zhaohaochen/git/psd-tools/psd-annotate")
-import core
-
-meta = core.parse_psd_file("/path/to.psd")   # 返回 meta dict（含 id）
-doc_id = meta["id"]
-_, tree = core.load_doc(doc_id)              # -> layers.json（完整树，无深度截断）
-node = core.find_layer(tree, "L3")           # 按 id 查节点
-hits = core.find_layers_by_name(tree, "按钮") # 按名称搜索
-css = core.css_snippet(node)                 # CSS 片段
-png = core.render_layer_png(doc_id, "L3")    # -> output/<id>/layers/L3.png（透明背景）
-dest, ox, oy = core.export_layer_crop(doc_id, "L3")  # crop 版，返回 (路径, offset_x, offset_y)
-docs = core.list_docs()
-```
-
-解释器必须用 venv：`/Users/zhaohaochen/.workbuddy/binaries/python/envs/default/bin/python`。
-依赖：psd-tools、pillow、flask、aggdraw、scipy、scikit-image（`pip install "psd-tools[composite]"`，清华镜像已配置）。
-
 ## 常见坑
 
-- **测试脚本直接调 `parse_psd_file` 不会写 `uploads/`**：随后调 `render_layer_png` 会因找不到源 PSD 报错；正常走 `psd_parse`（内部会复制到 uploads/）无此问题。直调 core 时先 `shutil.copy(src, core.UPLOAD_DIR/<doc_id>.psd)`。
-- Flask 改代码后必须重启进程才生效；MCP server 每次调用由客户端重新拉起，改完即生效。
-- 服务器后台启动命令：`cd /Users/zhaohaochen/git/psd-tools/psd-annotate && python app.py`（端口 8642）。
+- **禁止用 Python 直接 import core 或拉起 stdio 子进程调用**：一律走网络 MCP（`http://127.0.0.1:8643/mcp`）；连接失败说明服务未启动，重跑 `./start.sh`。
+- `psd_parse` 内部会把源 PSD 复制到 `uploads/`，`psd_export_layer` 等导出工具依赖该副本，请勿手动清理。
+- Flask/MCP 均为常驻进程；服务重启（重跑 `./start.sh` 会自动先停旧进程）后，MCP 连接需断开重连。

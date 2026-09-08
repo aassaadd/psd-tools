@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""PSD 标注 MCP Server（标准 MCP 协议 / stdio 传输）
+"""PSD 标注 MCP Server（标准 MCP 协议，支持 stdio 与 streamable-http 双传输）
 
 供 AI 客户端调用，能力与网页版一致：
   - 解析本地 PSD 文件，产出整体效果图 + 图层树
@@ -7,8 +7,12 @@
   - 按名称搜索图层
   - 导出任意图层（含图层组）为 PNG 素材
 
-启动：python mcp_server.py   （stdio，由 MCP 客户端拉起）
+启动方式：
+  - 网络版（推荐）：python mcp_server.py --http [--host 127.0.0.1] [--port 8643]
+    端点 http://127.0.0.1:8643/mcp（streamable-http），客户端以 URL 方式连接。
+  - stdio：python mcp_server.py          （由 MCP 客户端拉起，作为兜底）
 """
+import argparse
 import json
 import os
 import shutil
@@ -173,5 +177,24 @@ def psd_export_layer_crop(doc_id: str, layer_id: str,
                        "w": node["w"], "h": node["h"]}, ensure_ascii=False, indent=1)
 
 
+def main():
+    """解析命令行参数并启动 MCP Server。
+
+    参数：--http 启用 streamable-http 网络模式；--host 监听地址（默认 127.0.0.1）；
+         --port 监听端口（默认 8643）。不带 --http 时以 stdio 模式运行（兜底）。
+    返回值：无（进程常驻直到被终止）。
+    """
+    ap = argparse.ArgumentParser(description="psd-annotate MCP Server")
+    ap.add_argument("--http", action="store_true",
+                    help="以 streamable-http 网络模式启动（默认 stdio）")
+    ap.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1")
+    ap.add_argument("--port", type=int, default=8643, help="监听端口，默认 8643")
+    args = ap.parse_args()
+    if args.http:
+        server.run("streamable-http", host=args.host, port=args.port)
+    else:
+        server.run("stdio")
+
+
 if __name__ == "__main__":
-    server.run("stdio")
+    main()
