@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 import zipfile
+from collections import OrderedDict
 
 from PIL import Image
 from psd_tools import PSDImage
@@ -197,26 +198,42 @@ def find_layers_by_name(tree, keyword):
     return [n for n in iter_nodes(tree) if kw in str(n["name"]).lower()]
 
 
-# PSDImage 打开缓存：doc_id -> PSDImage（避免批量导出切图时重复解析 PSD 文件）
-_PSD_CACHE = {}
+# PSDImage 打开缓存：doc_id -> PSDImage（LRU，避免批量导出切图时重复解析 PSD；
+# 上限 _PSD_CACHE_MAX 条，淘汰最久未使用的条目，防止长期运行内存持续增长）
+_PSD_CACHE_MAX = 4
+_PSD_CACHE = OrderedDict()
 _PSD_CACHE_LOCK = threading.Lock()
+
+
+def _get_cached_psd(doc_id):
+    """获取缓存的 PSDImage（LRU 策略）。
+
+    功能：命中缓存则将条目移至队尾（视为最近使用）；未命中则打开 PSD 写入
+        缓存；写入后超过 _PSD_CACHE_MAX 时淘汰最久未使用（队首）的条目。
+    参数：doc_id —— 文档 id
+    返回：PSDImage 对象
+    """
+    with _PSD_CACHE_LOCK:
+        psd = _PSD_CACHE.get(doc_id)
+        if psd is not None:
+            _PSD_CACHE.move_to_end(doc_id)
+            return psd
+        psd = PSDImage.open(os.path.join(UPLOAD_DIR, doc_id + ".psd"))
+        _PSD_CACHE[doc_id] = psd
+        while len(_PSD_CACHE) > _PSD_CACHE_MAX:
+            _PSD_CACHE.popitem(last=False)
+        return psd
 
 
 def _locate_layer(doc_id, layer_id):
     """按深度优先顺序编号定位 psd-tools 图层对象（与解析编号一致）。
 
-    功能：打开 PSD（带模块级缓存，避免批量导出时重复解析整个文件），
+    功能：通过 LRU 缓存获取已打开的 PSD（避免批量导出时重复解析整个文件），
         按与解析期一致的深度优先编号定位图层对象。
     参数：doc_id —— 文档 id；layer_id —— 图层编号（如 "L3"）
     返回：psd-tools 图层对象；编号不存在抛 ValueError
     """
-    psd = _PSD_CACHE.get(doc_id)
-    if psd is None:
-        with _PSD_CACHE_LOCK:
-            psd = _PSD_CACHE.get(doc_id)
-            if psd is None:
-                psd = PSDImage.open(os.path.join(UPLOAD_DIR, doc_id + ".psd"))
-                _PSD_CACHE[doc_id] = psd
+    psd = _get_cached_psd(doc_id)
     idx = {"n": 0}
     found = {"layer": None}
 
