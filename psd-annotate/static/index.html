@@ -300,13 +300,17 @@ function spotMapClear(){ for(const k in spotMap) delete spotMap[k]; }
 function collectSpots(nodes, holder){
   for(const n of nodes){
     if(!n.visible || n.w<=0 || n.h<=0) { collectSpots(n.children||[], holder); continue; }
+    // 热区钳制到画布范围内（PSD 图层内容允许超出画布，显示时裁掉画布外部分）
+    const l = Math.max(0, n.bbox[0]), t = Math.max(0, n.bbox[1]);
+    const r = Math.min(docMeta.width,  n.bbox[2]), b = Math.min(docMeta.height, n.bbox[3]);
+    if(r <= l || b <= t) { collectSpots(n.children||[], holder); continue; } // 完全在画布外
     const d = document.createElement('div');
     d.className = 'hotspot';
-    d.style.left = (n.bbox[0]*100/docMeta.width)+'%';
-    d.style.top  = (n.bbox[1]*100/docMeta.height)+'%';
-    d.style.width  = (n.w*100/docMeta.width)+'%';
-    d.style.height = (n.h*100/docMeta.height)+'%';
-    d.onclick = e => { e.stopPropagation(); selectLayer(n.id, false); };
+    d.style.left = (l*100/docMeta.width)+'%';
+    d.style.top  = (t*100/docMeta.height)+'%';
+    d.style.width  = ((r-l)*100/docMeta.width)+'%';
+    d.style.height = ((b-t)*100/docMeta.height)+'%';
+    d.onclick = e => { e.stopPropagation(); pickSpot(n, e); };
     d.onmouseenter = e => showDim(n, e);
     d.onmouseleave = hideDim;
     holder.appendChild(d);
@@ -324,6 +328,31 @@ function toggleSpots(){
   showSpots = !showSpots;
   $('hotspots').style.display = showSpots ? 'block' : 'none';
   $('toggleSpots').textContent = showSpots ? '隐藏热区' : '显示热区';
+}
+// 点击命中：同一点下可能叠着多层热区（父组/子图层），
+// 默认选最内层（面积最小）；对已选中层再点一次则向外逐层切换
+function pickSpot(n, e){
+  const sr = $('stage').getBoundingClientRect();
+  const x = (e.clientX - sr.left) / scale;
+  const y = (e.clientY - sr.top) / scale;
+  const cands = [];
+  for(const id in spotMap){
+    const node = spotMap[id].node;
+    const cl = Math.max(0, node.bbox[0]), ct = Math.max(0, node.bbox[1]);
+    const cr = Math.min(docMeta.width, node.bbox[2]), cb = Math.min(docMeta.height, node.bbox[3]);
+    if(cr <= cl || cb <= ct) continue;
+    if(x >= cl && x <= cr && y >= ct && y <= cb) cands.push(node);
+  }
+  if(!cands.length){ selectLayer(n.id, false); return; }
+  cands.sort((a, b) => a.w * a.h - b.w * b.h);
+  let pick;
+  if(cands.length === 1){
+    pick = cands[0];
+  }else{
+    const cur = cands.findIndex(c => c.id === selectedId);
+    pick = cur >= 0 ? cands[(cur + 1) % cands.length] : cands[0];
+  }
+  selectLayer(pick.id, false);
 }
 function highlightSpot(id, on){
   const s = spotMap[id]; if(!s) return;
@@ -551,7 +580,9 @@ function renderDetail(){
       <div class="kv"><span>宽</span><b>${fmtLen(n.w, 'x')}</b></div>
       <div class="kv"><span>高</span><b>${fmtLen(n.h, 'y')}</b></div>
       <div class="kv"><span>透明度</span><b>${Math.round(n.opacity*100)}%</b></div>
-      <div class="kv"><span>混合模式</span><b>${n.blend}</b></div>`;
+      <div class="kv"><span>混合模式</span><b>${n.blend}</b></div>` +
+      (n.bbox[0] < 0 || n.bbox[1] < 0 || n.bbox[2] > docMeta.width || n.bbox[3] > docMeta.height
+        ? `<div class="kv"><span>超出画布</span><b>是（PSD 原始数据，热区已按画布裁剪显示）</b></div>` : '');
 
   if(n.kind === 'text' && n.text_info){
     const ti = n.text_info;
