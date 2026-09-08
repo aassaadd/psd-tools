@@ -222,3 +222,4 @@ psd-annotate/test_output
 psd-annotate/test_ai_mcp_rebuild.py
 psd-annotate/.playwright-cli
 .workbuddy
+.trae
