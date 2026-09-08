@@ -18,7 +18,9 @@ app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500MB
 
 @app.route("/")
 def index():
-    return send_from_directory(os.path.join(BASE_DIR, "static"), "index.html")
+    resp = send_from_directory(os.path.join(BASE_DIR, "static"), "index.html")
+    resp.headers["Cache-Control"] = "no-store"  # 禁用缓存，保证页面/脚本更新即时生效
+    return resp
 
 
 @app.route("/api/upload", methods=["POST"])

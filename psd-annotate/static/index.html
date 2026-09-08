@@ -297,12 +297,17 @@ function markActiveTree(){
 
 // ---------------- 热区 ----------------
 function spotMapClear(){ for(const k in spotMap) delete spotMap[k]; }
+// 公共工具：将图层 bbox 钳制到画布范围，返回 [l, t, r, b]
+// （PSD 图层内容允许超出画布，显示/命中检测时统一裁掉画布外部分）
+function clampBbox(node){
+  const l = Math.max(0, node.bbox[0]), t = Math.max(0, node.bbox[1]);
+  const r = Math.min(docMeta.width,  node.bbox[2]), b = Math.min(docMeta.height, node.bbox[3]);
+  return [l, t, r, b];
+}
 function collectSpots(nodes, holder){
   for(const n of nodes){
     if(!n.visible || n.w<=0 || n.h<=0) { collectSpots(n.children||[], holder); continue; }
-    // 热区钳制到画布范围内（PSD 图层内容允许超出画布，显示时裁掉画布外部分）
-    const l = Math.max(0, n.bbox[0]), t = Math.max(0, n.bbox[1]);
-    const r = Math.min(docMeta.width,  n.bbox[2]), b = Math.min(docMeta.height, n.bbox[3]);
+    const [l, t, r, b] = clampBbox(n);
     if(r <= l || b <= t) { collectSpots(n.children||[], holder); continue; } // 完全在画布外
     const d = document.createElement('div');
     d.className = 'hotspot';
@@ -338,8 +343,7 @@ function pickSpot(n, e){
   const cands = [];
   for(const id in spotMap){
     const node = spotMap[id].node;
-    const cl = Math.max(0, node.bbox[0]), ct = Math.max(0, node.bbox[1]);
-    const cr = Math.min(docMeta.width, node.bbox[2]), cb = Math.min(docMeta.height, node.bbox[3]);
+    const [cl, ct, cr, cb] = clampBbox(node);
     if(cr <= cl || cb <= ct) continue;
     if(x >= cl && x <= cr && y >= ct && y <= cb) cands.push(node);
   }
@@ -448,15 +452,16 @@ function findSnapTarget(m){
   return best;
 }
 
-// 计算两区间在单轴上的测量：优先朝向边缘间距；有重叠时改为对应边缘的对齐距离
+// 计算两区间在单轴上的测量：优先朝向边缘间距；有重叠时按鼠标位置选对齐边
+// mouseV: 鼠标在该轴的坐标（x 轴传 m.x，y 轴传 m.y），用于重叠时决定测量哪一对边缘
 // 返回 { gap, from, to, aligned }
-function axisMeasure(a1, a2, b1, b2){
+function axisMeasure(a1, a2, b1, b2, mouseV){
   if(b1 >= a2) return { gap: b1 - a2, from: a2, to: b1, aligned: false }; // B 在正方向
   if(a1 >= b2) return { gap: a1 - b2, from: b2, to: a1, aligned: false }; // B 在负方向
-  // 有重叠：取差值更小的一对边缘（左-左 或 右-右）做对齐测量，带符号
-  const ll = Math.abs(a1 - b1), rr = Math.abs(a2 - b2);
-  if(ll <= rr) return { gap: b1 - a1, from: a1, to: b1, aligned: true };
-  return { gap: b2 - a2, from: a2, to: b2, aligned: true };
+  // 有重叠：按鼠标位置选对齐边（鼠标在重叠区中点右侧测右-右，左侧测左-左），方向跟随鼠标
+  const mid = (Math.max(a1, b1) + Math.min(a2, b2)) / 2;
+  if(mouseV >= mid) return { gap: b2 - a2, from: a2, to: b2, aligned: true };
+  return { gap: b1 - a1, from: a1, to: b1, aligned: true };
 }
 
 function renderSnapMeasure(gs, a, b, m){
@@ -482,33 +487,36 @@ function renderSnapMeasure(gs, a, b, m){
     ? (Math.max(al, bl) + Math.min(ar, br)) / 2
     : ((al + ar) / 2 + (bl + br) / 2) / 2;
 
-  // X 轴：热区到热区的水平距离
-  const mx = axisMeasure(al, ar, bl, br);
+  // X 轴：热区到热区的水平距离（方向跟随鼠标，显示恒正）
+  const mx = axisMeasure(al, ar, bl, br, m.x);
   gs.appendChild(svgLine(mx.from, yLine, mx.to, yLine, 'measure'));
   gs.appendChild(svgLine(mx.from, yLine - 8, mx.from, yLine + 8, 'edge-tick'));
   gs.appendChild(svgLine(mx.to, yLine - 8, mx.to, yLine + 8, 'edge-tick'));
 
-  // Y 轴：热区到热区的垂直距离
-  const my = axisMeasure(at, ab, bt, bb);
+  // Y 轴：热区到热区的垂直距离（方向跟随鼠标，显示恒正）
+  const my = axisMeasure(at, ab, bt, bb, m.y);
   gs.appendChild(svgLine(xLine, my.from, xLine, my.to, 'measure'));
   gs.appendChild(svgLine(xLine - 8, my.from, xLine + 8, my.from, 'edge-tick'));
   gs.appendChild(svgLine(xLine - 8, my.to, xLine + 8, my.to, 'edge-tick'));
 
-  showGuideLabel($('labelDx'), `Δx ${fmtLen(mx.gap, 'x')}`, (mx.from + mx.to) / 2, yLine);
-  showGuideLabel($('labelDy'), `Δy ${fmtLen(my.gap, 'y')}`, xLine, (my.from + my.to) / 2);
+  showGuideLabel($('labelDx'), `Δx ${fmtLen(Math.abs(mx.gap), 'x')}`, (mx.from + mx.to) / 2, yLine);
+  showGuideLabel($('labelDy'), `Δy ${fmtLen(Math.abs(my.gap), 'y')}`, xLine, (my.from + my.to) / 2);
 }
 
 // ---------------- 自由测量：选中图层 -> 鼠标点 ----------------
 function renderFreeMeasure(gs, node, m){
-  const [l, t] = node.bbox;
-  const dx = Math.round(m.x - l), dy = Math.round(m.y - t);
+  const [al, at, ar, ab] = node.bbox;
+  // 测量方向跟随鼠标：x 按鼠标在图层左/右半侧从左/右边缘起测，y 按鼠标在上/下半侧从上/下边缘起测
+  const vx = m.x >= (al + ar) / 2 ? ar : al;
+  const vy = m.y >= (at + ab) / 2 ? ab : at;
+  const dx = Math.abs(Math.round(m.x - vx)), dy = Math.abs(Math.round(m.y - vy));
 
-  // 红色测量线：选中图层左/上边缘 -> 鼠标位置
-  gs.appendChild(svgLine(l, m.y, m.x, m.y, 'measure'));
-  gs.appendChild(svgLine(m.x, t, m.x, m.y, 'measure'));
-  // 图层边缘刻度短线
-  gs.appendChild(svgLine(l, m.y - 8, l, m.y + 8, 'edge-tick'));
-  gs.appendChild(svgLine(m.x - 8, t, m.x + 8, t, 'edge-tick'));
+  // 红色测量线：图层最近边缘 -> 鼠标位置
+  gs.appendChild(svgLine(vx, m.y, m.x, m.y, 'measure'));
+  gs.appendChild(svgLine(m.x, vy, m.x, m.y, 'measure'));
+  // 起测边缘刻度短线
+  gs.appendChild(svgLine(vx, m.y - 8, vx, m.y + 8, 'edge-tick'));
+  gs.appendChild(svgLine(m.x - 8, vy, m.x + 8, vy, 'edge-tick'));
   // 鼠标点标记
   const dot = document.createElementNS(SVG_NS, 'circle');
   dot.setAttribute('cx', m.x); dot.setAttribute('cy', m.y);
@@ -516,8 +524,8 @@ function renderFreeMeasure(gs, node, m){
   gs.appendChild(dot);
 
   // 距离标签放在测量线中点
-  showGuideLabel($('labelDx'), `Δx ${fmtLen(dx, 'x')}`, (l + m.x) / 2, m.y);
-  showGuideLabel($('labelDy'), `Δy ${fmtLen(dy, 'y')}`, m.x, (t + m.y) / 2);
+  showGuideLabel($('labelDx'), `Δx ${fmtLen(dx, 'x')}`, (vx + m.x) / 2, m.y);
+  showGuideLabel($('labelDy'), `Δy ${fmtLen(dy, 'y')}`, m.x, (vy + m.y) / 2);
 }
 
 $('stage').addEventListener('mousemove', renderMeasure);
