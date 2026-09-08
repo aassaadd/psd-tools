@@ -80,6 +80,18 @@ def psd_parse(file_path: str) -> str:
 
 
 @server.tool()
+def psd_find_doc(keyword: str) -> str:
+    """按设计稿名称模糊搜索已解析过的文档（不区分大小写，子串匹配）。
+    返回匹配文档的 meta 列表（doc_id、名称、画布尺寸、图层数、解析时间），
+    可直接用 doc_id 继续调用 psd_layer_tree / psd_layer_info / psd_export_* 等工具。"""
+    kw = str(keyword).strip().lower()
+    if not kw:
+        return json.dumps({"matched": 0, "docs": []}, ensure_ascii=False)
+    hits = [d for d in core.list_docs() if kw in str(d.get("name", "")).lower()]
+    return json.dumps({"matched": len(hits), "docs": hits}, ensure_ascii=False, indent=1)
+
+
+@server.tool()
 def psd_layer_tree(doc_id: str, max_depth: int = 3) -> str:
     """获取某文档的图层树。doc_id 来自 psd_parse / psd_list_docs。
     max_depth 控制展开深度（默认 3），更深的子图层以 children_omitted 计数表示。"""

@@ -31,8 +31,10 @@ agent_created: true
 
 ## 标准工作流
 
-### 1. 解析 PSD
-`psd_parse(file_path)`：file_path 为 .psd 绝对路径。返回 doc_id、画布宽高、前两层图层树概览。解析需数秒到数十秒。同一文件重复解析会生成新 doc_id。
+### 1. 获取文档 doc_id
+- **已知设计稿名字**：`psd_find_doc(keyword)` 按名称模糊搜索（不区分大小写；网页版上传过的稿子同样能搜到），返回匹配文档的 doc_id、画布尺寸、图层数、解析时间，无需重新解析。
+- 列出全部：`psd_list_docs()`。
+- 新文件：`psd_parse(file_path)`，file_path 为 .psd 绝对路径。返回 doc_id、画布宽高、前两层图层树概览。解析需数秒到数十秒，同一文件重复解析会生成新 doc_id。
 
 ### 2. 浏览/搜索图层
 - `psd_layer_tree(doc_id, max_depth)`：默认深度 3，深层以 `children_omitted` 计数表示；需要更深层级时增大 max_depth 逐层展开，避免一次性拉全树。
@@ -48,7 +50,7 @@ agent_created: true
 
 ## 1:1 还原 PSD → HTML（已验证 100% 像素一致）
 
-1. `psd_parse` → doc_id；`psd_layer_tree` 拉全树，收集所有可见叶子图层（kind 为 pixel/text/shape）。
+1. `psd_parse`（或 `psd_find_doc` 找已解析过的稿）→ doc_id；`psd_layer_tree` 拉全树，收集所有可见叶子图层（kind 为 pixel/text/shape）。
 2. 对每个叶子：`psd_layer_info` 拿位置 + `psd_export_layer_crop` 拿素材与 offset。
 3. 生成 HTML：画布容器尺寸 = PSD 宽高；每个图层一个绝对定位 `<img>`，`left/top` 用 offset（offset 为负时同样直接使用），`width/height` 用 bbox 尺寸；opacity<1 加 opacity，blend≠normal 加 mix-blend-mode。**DOM 顺序 = 图层树正序**（先出现的在下层，浏览器后写的元素在上），不要倒序。**出血图层例外**：bbox 超出画布时，crop 会被裁剪到画布内，返回的 offset 也被截到 [0,0] 起始、实际 PNG 尺寸 < bbox 尺寸——此时 width/height 必须用实际 PNG 尺寸（读文件），否则浏览器会拉伸变形。
 4. 文本图层也按图片导出（不重建文字 DOM），保证字体渲染 100% 一致；若需要可编辑文本，则用 text_info 另行生成 DOM 文字节点。

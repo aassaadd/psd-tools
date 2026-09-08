@@ -2,12 +2,15 @@
 
 网络版 MCP：端点 `http://127.0.0.1:8643/mcp`（streamable-http），在 MCP 客户端配置中以 URL 方式接入（名称 `psd-annotate`）。服务端代码为仓库内 `psd-annotate/mcp_server.py`，由仓库根目录 `./start.sh` 拉起（或 `python psd-annotate/mcp_server.py --http --port 8643`）。
 
-## MCP 工具（7 个）
+## MCP 工具（8 个）
 
 所有工具返回 JSON 字符串；出错时返回 `{"error": "..."}`。
 
 ### psd_list_docs()
-列出已解析过的所有文档。返回 `[{id, name, width, height, layer_count, parsed_at}, ...]`。doc 缓存位于 `output/<doc_id>/`（composite.png、layers.json、meta.json）。
+列出已解析过的所有文档。返回 `[{id, name, width, height, layer_count, parsed_at}, ...]`（按解析时间倒序）。doc 缓存位于 `output/<doc_id>/`（composite.png、layers.json、meta.json）。
+
+### psd_find_doc(keyword)
+按设计稿名称模糊搜索已解析过的文档（不区分大小写，子串匹配；网页版上传与 MCP 解析的都能搜到）。返回 `{"matched": n, "docs": [{id, name, width, height, layer_count, parsed_at}]}`，用 `id`（doc_id）继续后续工具调用。
 
 ### psd_parse(file_path)
 解析本地 .psd（绝对路径）。返回 `{"meta": {id, name, width, height, layer_count, parsed_at}, "layers_preview": [...]}`，preview 为前两层树。大文件需数秒到数十秒。
