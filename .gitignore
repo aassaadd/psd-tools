@@ -216,3 +216,5 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+psd-annotate/output/**
+psd-annotate/uploads/**
