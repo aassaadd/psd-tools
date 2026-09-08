@@ -37,9 +37,10 @@ Python 一律使用 venv 解释器：`/Users/zhaohaochen/.workbuddy/binaries/pyt
 
 1. `psd_parse` → doc_id；`psd_layer_tree` 拉全树，收集所有可见叶子图层（kind 为 pixel/text/shape）。
 2. 对每个叶子：`psd_layer_info` 拿位置 + `psd_export_layer_crop` 拿素材与 offset。
-3. 生成 HTML：画布容器尺寸 = PSD 宽高；每个图层一个绝对定位 `<img>`，`left/top` 用 offset（offset 为负时同样直接使用），`width/height` 用 bbox 尺寸；opacity<1 加 opacity，blend≠normal 加 mix-blend-mode。
+3. 生成 HTML：画布容器尺寸 = PSD 宽高；每个图层一个绝对定位 `<img>`，`left/top` 用 offset（offset 为负时同样直接使用），`width/height` 用 bbox 尺寸；opacity<1 加 opacity，blend≠normal 加 mix-blend-mode。**DOM 顺序 = 图层树正序**（先出现的在下层，浏览器后写的元素在上），不要倒序。
 4. 文本图层也按图片导出（不重建文字 DOM），保证字体渲染 100% 一致；若需要可编辑文本，则用 text_info 另行生成 DOM 文字节点。
-5. 验证：用 Playwright 以 PSD 尺寸为视口截图，与 composite 图做像素对比（PIL + numpy）。
+5. 验证：无 Playwright 时可等效验证——用 PIL 按树序把各 crop 素材 alpha_composite 到画布（位置用 offset），与 output/<doc_id>/composite.png 逐像素对比（PIL + numpy）；有 Playwright 则以 PSD 尺寸为视口截图对比。
+6. 本地直调 core 的坑：layers.json 里叶子 kind 实际值是 `layer`/`group`（不是 pixel/text/shape）；`core.export_layer_crop(doc_id, layer_id)` 无 output_dir 参数，结果落在 output/<doc_id>/crops/，需自行拷贝到目标目录。
 
 完整客户端示例见 `scripts/mcp_client.py`。
 
