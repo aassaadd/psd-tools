@@ -244,7 +244,10 @@ def export_layer_crop(doc_id, layer_id):
     if not node:
         raise ValueError(f"图层不存在: {layer_id}")
     comp_path = os.path.join(doc_dir(doc_id), "composite.png")
-    img = Image.open(comp_path)
+    try:
+        img = Image.open(comp_path)
+    except Exception:
+        raise ValueError(f"文档 {doc_id} 未生成合成图，请重新解析")
     l, t, r, b = node["bbox"]
     cl, ct = max(0, l), max(0, t)
     cr, cb = min(img.width, r), min(img.height, b)
