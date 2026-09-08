@@ -1,0 +1,6 @@
+# psd-tools 运行依赖
+# 安装：pip install -r requirements.txt
+flask>=3.1            # Web 服务
+psd-tools[composite]>=1.19  # PSD 解析；composite 附加项引入 aggdraw，用于矢量形状图层渲染
+pillow>=12.3          # 图像处理（psd-tools 渲染输出依赖）
+mcp>=2.2              # MCP Server（stdio 传输）

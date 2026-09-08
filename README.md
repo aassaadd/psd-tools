@@ -49,24 +49,30 @@ psd-tools
 
 - macOS / Linux / Windows
 - Python 3.9+
-- 依赖库：`flask`、`psd-tools`、`pillow`、`mcp`
+- 依赖库：见 [requirements.txt](requirements.txt)（`flask`、`psd-tools[composite]`、`pillow`、`mcp`）
 
 ## 快速开始
 
 ### 1. 安装依赖
 
 ```bash
-pip install flask psd-tools pillow mcp
+pip install -r requirements.txt
 ```
 
 ### 2. 启动网页版
 
 ```bash
+./start.sh
+```
+
+脚本会自动创建虚拟环境、安装依赖（如缺失）并启动服务。浏览器访问 <http://127.0.0.1:8642>，上传 PSD 即可使用。
+
+也可以手动启动：
+
+```bash
 cd psd-annotate
 python app.py
 ```
-
-浏览器访问 <http://127.0.0.1:8642>，上传 PSD 即可使用。
 
 ### 3. 接入 MCP 客户端（可选）
 
