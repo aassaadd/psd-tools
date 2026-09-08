@@ -610,6 +610,13 @@ function renderDetail(){
     <div class="btn-row">
       <button class="btn blue" onclick="downloadAsset()">导出 PNG 素材</button>
     </div>
+    <div class="btn-row">
+      <select id="layoutMode" style="flex:1;height:32px;border:1px solid var(--border);border-radius:6px;padding:0 8px;font-size:13px;background:#fff;">
+        <option value="vw" selected>自适应 vw</option>
+        <option value="px">固定 px</option>
+      </select>
+      <button class="btn" onclick="exportHtml()">导出网页</button>
+    </div>
   </div>`;
   box.innerHTML = html;
   loadThumb(n.id);
@@ -639,6 +646,41 @@ function downloadAsset(){
   a.download = `${n.name}.png`;
   a.click();
   toast('素材已导出');
+}
+/**
+ * 导出整份设计稿为网页压缩包（zip 下载）
+ * 功能：按「布局模式」下拉框选择（vw 自适应 / px 固定）请求后端导出接口并触发浏览器下载；
+ *       采用 fetch + blob 方式，接口返回错误（404/500 等）时可读取 JSON 中的 error 并 toast 提示
+ * 参数：无
+ * 返回值：无
+ */
+async function exportHtml(){
+  if(!docMeta){ toast('请先选择设计稿'); return; }
+  try{
+    const resp = await fetch(`/api/export/${docMeta.id}/html?layout=${$('layoutMode').value}`);
+    if(!resp.ok){
+      let msg = `导出失败（HTTP ${resp.status}）`;
+      try{ const j = await resp.json(); if(j && j.error) msg = j.error; }catch(e){}
+      toast(msg); return;
+    }
+    const blob = await resp.blob();
+    // 文件名优先取服务端 Content-Disposition 的 filename*（RFC 5987，支持中文），
+    // 其次 filename=，解析失败时回退设计稿名
+    let fname = ((docMeta.name || 'export') + '.zip');
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename\*=(?:UTF-8'')?([^;]+)/i) || cd.match(/filename="?([^";]+)"?/i);
+    if(m){
+      const raw = m[1].trim().replace(/^["']|["']$/g, '');
+      try{ fname = decodeURIComponent(raw); }catch(e){ fname = raw; }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fname; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+    toast('网页导出中，请留意下载');
+  }catch(e){
+    toast('导出失败：' + (e && e.message ? e.message : '网络异常'));
+  }
 }
 function copyCSS(){
   const code = $('cssCode').textContent;

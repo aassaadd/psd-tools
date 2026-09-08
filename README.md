@@ -99,6 +99,7 @@ python app.py
 | GET | `/api/docs` | 列出已解析文档 |
 | GET | `/api/doc/<doc_id>` | 获取文档 meta 与图层树 |
 | GET | `/api/layer/<doc_id>/<layer_id>/png` | 渲染图层 PNG（`?download=1` 触发下载） |
+| GET | `/api/export/<doc_id>/html` | 导出静态网页 zip（`?layout=vw` 自适应 / `px` 固定，默认 vw；含 index.html、css/style.css、assets 切图；多画板自动多页面 + 目录页） |
 | GET | `/output/<doc_id>/<file>` | 访问解析产物静态文件 |
 
 ## 技术方案
@@ -114,15 +115,16 @@ python app.py
 | --- | --- | --- |
 | PSD 解析核心 | 效果图渲染、图层树、文本信息提取、图层懒渲染 | 已完成 |
 | 网页版 | 上传、图层树、热区标注、单位切换、测距吸附、CSS 复制、切图导出 | 已完成 |
+| 静态网页导出 | 一键导出 zip（HTML + CSS + 切图），vw 自适应/px 固定双模式，文本图层真实渲染，多画板自动多页面 + 目录页 | 已完成 |
 | MCP Server | 六个工具（解析/树/搜索/详情/导出/列表） | 已完成 |
 | 图层懒渲染缓存 | assets 目录按需生成图层 PNG | 已完成 |
 
 ### 后续规划
 
-- 页面/画板（Artboard）多画布支持
 - 切图导出可选 2x/3x 缩放与 SVG 格式
 - 标注单位支持 dp/pt（移动端、iOS 基准）
 - 图层信息展示切图切片（Slice）数据
+- 网页导出文本行高/字距精确度量
 
 ## License
 

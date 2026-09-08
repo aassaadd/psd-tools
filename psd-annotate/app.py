@@ -5,6 +5,7 @@
 """
 import os
 import uuid
+from io import BytesIO
 
 from flask import Flask, request, jsonify, send_from_directory, send_file, abort
 
@@ -66,6 +67,28 @@ def layer_png(doc_id, layer_id):
     return send_file(path, mimetype="image/png",
                      as_attachment=request.args.get("download") == "1",
                      download_name=f"{layer_id}.png")
+
+
+@app.route("/api/export/<doc_id>/html")
+def export_html(doc_id):
+    """导出静态网页为 zip 压缩包。
+
+    功能：将指定文档的标注页面打包成可离线浏览的静态网页，以 zip 附件形式下载。
+    参数：doc_id —— 文档 ID（URL 路径）；layout —— 布局单位，从 query string 读取，
+          仅允许 "vw"/"px"，其他值按 "vw" 处理。
+    返回：zip 文件附件（application/zip）；doc_id 无效返回 404，打包失败返回 500 及错误信息。
+    """
+    layout = request.args.get("layout", "vw")
+    if layout not in ("vw", "px"):
+        layout = "vw"
+    try:
+        data, name = core.export_html_zip(doc_id, layout)
+    except FileNotFoundError:
+        abort(404)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 500
+    return send_file(BytesIO(data), mimetype="application/zip",
+                     as_attachment=True, download_name=f"{name}.zip")
 
 
 @app.route("/output/<doc_id>/<path:fname>")
