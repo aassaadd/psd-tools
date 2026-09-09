@@ -91,6 +91,24 @@ def export_html(doc_id):
                      as_attachment=True, download_name=f"{name}.zip")
 
 
+@app.route("/api/export/<doc_id>/figma")
+def export_figma(doc_id):
+    """导出 Figma（SVG）为 zip 压缩包。
+
+    功能：将指定文档的图层导出为 Figma 可导入的 SVG 文件，打包成 zip 附件下载。
+    参数：doc_id —— 文档 ID（URL 路径）。
+    返回：zip 文件附件（application/zip）；doc_id 无效返回 404，导出失败返回 500 及错误信息。
+    """
+    try:
+        data, name = core.export_figma_zip(doc_id)
+    except FileNotFoundError:
+        abort(404)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 500
+    return send_file(BytesIO(data), mimetype="application/zip",
+                     as_attachment=True, download_name=f"{name}-figma.zip")
+
+
 @app.route("/output/<doc_id>/<path:fname>")
 def output_file(doc_id, fname):
     return send_from_directory(core.doc_dir(doc_id), fname)

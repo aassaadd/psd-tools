@@ -616,6 +616,7 @@ function renderDetail(){
         <option value="px">固定 px</option>
       </select>
       <button class="btn" onclick="exportHtml()">导出网页</button>
+      <button class="btn" onclick="exportFigma()">导出 Figma (SVG)</button>
     </div>
   </div>`;
   box.innerHTML = html;
@@ -678,6 +679,41 @@ async function exportHtml(){
     a.href = url; a.download = fname; a.click();
     setTimeout(()=>URL.revokeObjectURL(url), 1000);
     toast('网页导出中，请留意下载');
+  }catch(e){
+    toast('导出失败：' + (e && e.message ? e.message : '网络异常'));
+  }
+}
+/**
+ * 导出整份设计稿为 Figma (SVG) 包（zip 下载）
+ * 功能：请求后端 Figma 导出接口并触发浏览器下载；
+ *       采用 fetch + blob 方式，接口返回错误（404/500 等）时可读取 JSON 中的 error 并 toast 提示
+ * 参数：无
+ * 返回值：无
+ */
+async function exportFigma(){
+  if(!docMeta){ toast('请先选择设计稿'); return; }
+  try{
+    const resp = await fetch(`/api/export/${docMeta.id}/figma`);
+    if(!resp.ok){
+      let msg = `导出失败（HTTP ${resp.status}）`;
+      try{ const j = await resp.json(); if(j && j.error) msg = j.error; }catch(e){}
+      toast(msg); return;
+    }
+    const blob = await resp.blob();
+    // 文件名优先取服务端 Content-Disposition 的 filename*（RFC 5987，支持中文），
+    // 其次 filename=，解析失败时回退设计稿名
+    let fname = ((docMeta.name || 'export') + '.zip');
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename\*=(?:UTF-8'')?([^;]+)/i) || cd.match(/filename="?([^";]+)"?/i);
+    if(m){
+      const raw = m[1].trim().replace(/^["']|["']$/g, '');
+      try{ fname = decodeURIComponent(raw); }catch(e){ fname = raw; }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fname; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+    toast('Figma 导出中，请留意下载');
   }catch(e){
     toast('导出失败：' + (e && e.message ? e.message : '网络异常'));
   }

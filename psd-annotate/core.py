@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """PSD 解析核心逻辑（供 Flask Web 与 MCP server 共用）"""
+import base64
 import html
 import io
 import json
@@ -10,6 +11,7 @@ import time
 import uuid
 import zipfile
 from collections import OrderedDict
+from xml.sax.saxutils import escape as _sax_escape
 
 from PIL import Image
 from psd_tools import PSDImage
@@ -724,6 +726,242 @@ def export_html_zip(doc_id, layout="vw"):
         files["index.html"] = _toc_html(meta, pages)
 
     files["css/style.css"] = _page_css(pages, layout, rules, multi)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(files):
+            zf.writestr(path, files[path])
+    return buf.getvalue(), safe_name(meta.get("name", "未命名"))
+
+
+# ============ Figma (SVG) 导出 ============
+
+_FIGMA_README = (
+    "本压缩包由 psd-tools 导出，用于导入 Figma。\n"
+    "导入方法：把 .svg 文件直接拖入 Figma 画布，每个 SVG 对应一个画板 Frame，"
+    "图层树与 PSD 图层对应，文本为可编辑文本。\n"
+)
+
+
+def _xml_attr(value):
+    """转义 XML 属性值 / 文本内容。
+
+    功能：转义 & < > 与双引号（映射为 &quot;），单引号保留——
+        font-family 属性值内部需用单引号包裹字体名。
+    参数：value —— 原始字符串
+    返回：转义后的字符串
+    """
+    return _sax_escape(str(value), {'"': "&quot;"})
+
+
+def _svg_unique_id(node, used_ids):
+    """为 SVG 元素生成同页唯一的 id（Figma 导入时作为图层名）。
+
+    功能：图层名经 safe_name 清洗并把空白字符合并为下划线，重名时依次
+        追加 _2、_3… 序号，保证同页内 id 唯一（不混入 L3 这类内部编号，
+        保证 Figma 中图层名干净）。
+    参数：node —— 图层节点；used_ids —— 本页已占用 id 集合（就地更新）
+    返回：唯一 id 字符串
+    """
+    base = re.sub(r"\s+", "_", safe_name(node["name"]))
+    key, n = base, 2
+    while key in used_ids:
+        key = f"{base}_{n}"
+        n += 1
+    used_ids.add(key)
+    return key
+
+
+def _svg_elem_attrs(node, used_ids):
+    """生成 SVG 元素的公共属性串（id / data-name / opacity / 混合模式）。
+
+    功能：id 为清洗去重后的图层名（Figma 导入据此命名图层），data-name
+        保留原始图层名；opacity 小于 1 时写入；混合模式非 normal 时以
+        内联 style 尽力写入（Figma 不支持该混合模式时忽略，不影响导入）。
+    参数：node —— 图层节点；used_ids —— 本页已占用 id 集合（就地更新）
+    返回：属性字符串，形如 'id="xx" data-name="yy" opacity="0.5"'
+    """
+    attrs = [
+        f'id="{_svg_unique_id(node, used_ids)}"',
+        f'data-name="{_xml_attr(node["name"])}"',
+    ]
+    if node.get("opacity", 1) < 1:
+        attrs.append(f'opacity="{node["opacity"]}"')
+    if node.get("blend", "normal") != "normal":
+        attrs.append(f'style="mix-blend-mode: {node["blend"]};"')
+    return " ".join(attrs)
+
+
+def _svg_text_element(node, x, y, attrs):
+    """把文本图层节点导出为可编辑的 SVG <text> 元素。
+
+    功能：font-family 以解析字体优先（最多前 3 个，单引号包裹）拼接
+        中文回退栈；font-size / fill 取 text_info 首个值（多值 list 取
+        首个，缺失则省略该属性）；y 按基线近似定位（top + 0.8 × 字号，
+        缺字号按 16 近似）；多行文本按行拆为 <tspan>，后续行 dy 按近似
+        行高 1.4 × 字号递增；文字内容做 XML 转义。
+    参数：node —— 图层节点（含 text_info）；x / y —— 相对画板原点的
+        文本框左上角坐标；attrs —— 公共属性串（id/data-name 等）
+    返回：<text> 元素字符串
+    """
+    ti = node.get("text_info") or {}
+    fs = ti.get("font_size")
+    if isinstance(fs, list):
+        fs = fs[0] if fs else None
+    color = ti.get("color")
+    if isinstance(color, list):
+        color = color[0] if color else None
+    fonts = [f for f in (ti.get("fonts") or []) if f][:3]
+    stack = ", ".join("'%s'" % _xml_attr(f) for f in fonts)
+    stack = (stack + ", ") if stack else ""
+    stack += "'PingFang SC', 'Microsoft YaHei', sans-serif"
+    size = fs if fs else 16  # 缺字号时按 16 近似，用于基线与行距计算
+    elem_attrs = [
+        attrs,
+        f'x="{x}"',
+        f'y="{round(y + size * 0.8, 1)}"',
+        f'font-family="{stack}"',
+    ]
+    if fs:
+        elem_attrs.append(f'font-size="{fs}"')
+    if color:
+        elem_attrs.append(f'fill="{color}"')
+    lines = re.split(r"\r\n|\r|\n", str(ti.get("text", "")))
+    if len(lines) == 1:
+        return f'<text {" ".join(elem_attrs)}>{_xml_attr(lines[0])}</text>'
+    dy = round(size * 1.4, 1)
+    tspans = []
+    for i, ln in enumerate(lines):
+        tspans.append(
+            f'<tspan x="{x}" dy="{0 if i == 0 else dy}">{_xml_attr(ln)}</tspan>'
+        )
+    return f'<text {" ".join(elem_attrs)}>{"".join(tspans)}</text>'
+
+
+def _svg_image_element(doc_id, node, x, y, attrs):
+    """把非文本叶子图层导出为 base64 内嵌 <image> 元素。
+
+    功能：复用 render_layer_png 渲染图层自身像素（透明底，不含其他
+        元素），裁掉透明边得到最小位图并 base64 内嵌；坐标随裁剪偏移
+        同步修正。同时写 xlink:href 与 href，兼容旧版查看器。
+    参数：doc_id —— 文档 id；node —— 图层节点；x / y —— 相对画板
+        原点的图层左上角坐标；attrs —— 公共属性串（id/data-name 等）
+    返回：<image> 元素字符串；图层无像素或全透明返回 None
+    """
+    try:
+        path = render_layer_png(doc_id, node["id"])
+    except ValueError:
+        return None  # 无可渲染像素（如空组/纯调整层），跳过
+    img = Image.open(path)
+    box = img.getbbox()  # 非零像素包围盒，裁掉透明边
+    if not box:
+        return None  # 整层全透明，跳过
+    buf = io.BytesIO()
+    img.crop(box).save(buf, "PNG")
+    uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    tx, ty = x + box[0], y + box[1]
+    tw, th = box[2] - box[0], box[3] - box[1]
+    return (
+        f'<image {attrs} x="{tx}" y="{ty}" width="{tw}" height="{th}" '
+        f'xlink:href="{uri}" href="{uri}"/>'
+    )
+
+
+def _render_svg_body(doc_id, nodes, page, used_ids):
+    """递归渲染一页的图层节点为 SVG 片段。
+
+    功能：仅导出 visible 且 bbox 与页面区域有交集的图层；组生成嵌套
+        <g>（无 transform）；文本图层（text_info.text 非空）生成可编辑
+        <text>；其余叶子生成 base64 内嵌 <image>，无像素则跳过不中断。
+        所有坐标均为相对画板原点的绝对坐标。
+    参数：doc_id —— 文档 id；nodes —— 图层节点数组；page —— 页面
+        上下文字典（含 area / origin）；used_ids —— 本页已占用 id
+        集合（就地更新）
+    返回：SVG 片段字符串
+    """
+    parts = []
+    ox, oy = page["origin"]
+    for node in nodes:
+        if not node.get("visible", True):
+            continue
+        if node.get("w", 0) <= 0 or node.get("h", 0) <= 0:
+            continue
+        if not _bbox_intersects(node["bbox"], page["area"]):
+            continue
+        x = node["bbox"][0] - ox
+        y = node["bbox"][1] - oy
+        attrs = _svg_elem_attrs(node, used_ids)
+        if node["kind"] == "group":
+            inner = _render_svg_body(doc_id, node.get("children", []), page, used_ids)
+            parts.append(f"<g {attrs}>\n{inner}\n</g>")
+        elif node["kind"] == "text" and (node.get("text_info") or {}).get("text"):
+            parts.append(_svg_text_element(node, x, y, attrs))
+        else:
+            img = _svg_image_element(doc_id, node, x, y, attrs)
+            if img:
+                parts.append(img)
+    return "\n".join(parts)
+
+
+def export_figma_zip(doc_id):
+    """导出 Figma 可导入的 SVG zip。
+
+    功能：基于缓存的图层树（layers.json）把已解析文档导出为 Figma 可
+        导入的 SVG 文件包：无/单个画板产出整稿单个 <设计稿名>.svg；多
+        画板时每个画板产出独立 <画板名>.svg（viewBox 为画板尺寸，仅含
+        该画板区域内图层，坐标减去画板原点）。zip 内附 README.txt 一行
+        导入说明。
+    参数：doc_id —— 文档 id
+    返回：(zip 文件字节 bytes, 下载文件名主体 str，即设计稿名称)
+    异常：doc_id 无效抛 FileNotFoundError
+    """
+    meta, tree = load_doc(doc_id)
+    # 页面划分：与 export_html_zip 一致——>=2 个有效画板走多文件，否则整稿单文件
+    artboards = [
+        a for a in (meta.get("artboards") or [])
+        if isinstance(a.get("bbox"), list) and len(a["bbox"]) == 4
+        and a["bbox"][2] > a["bbox"][0] and a["bbox"][3] > a["bbox"][1]
+    ]
+    if len(artboards) > 1:
+        pages = [{
+            "name": ab.get("name") or f"画板{i}",
+            "w": ab["bbox"][2] - ab["bbox"][0],
+            "h": ab["bbox"][3] - ab["bbox"][1],
+            "area": tuple(ab["bbox"]),
+            "origin": (ab["bbox"][0], ab["bbox"][1]),
+        } for i, ab in enumerate(artboards, 1)]
+    else:
+        pages = [{
+            "name": meta.get("name", "设计稿"),
+            "w": meta["width"],
+            "h": meta["height"],
+            "area": (0, 0, meta["width"], meta["height"]),
+            "origin": (0, 0),
+        }]
+
+    files = {}
+    used_files = set()
+    for page in pages:
+        used_ids = set()
+        body = _render_svg_body(doc_id, tree, page, used_ids)
+        svg = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<svg xmlns="http://www.w3.org/2000/svg" '
+            'xmlns:xlink="http://www.w3.org/1999/xlink" '
+            f'width="{page["w"]}" height="{page["h"]}" '
+            f'viewBox="0 0 {page["w"]} {page["h"]}">\n'
+            f"{body}\n"
+            "</svg>\n"
+        )
+        # SVG 文件名清洗去重（冲突追加 _2、_3…）
+        base = safe_name(page["name"]) or "未命名"
+        fname, n = base, 2
+        while fname in used_files:
+            fname = f"{base}_{n}"
+            n += 1
+        used_files.add(fname)
+        files[f"{fname}.svg"] = svg.encode("utf-8")
+    files["README.txt"] = _FIGMA_README.encode("utf-8")
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
