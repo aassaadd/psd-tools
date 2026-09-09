@@ -222,6 +222,8 @@ __marimo__/
 .streamlit/secrets.toml
 psd-annotate/output/**
 psd-annotate/uploads/**
+!psd-annotate/uploads/.gitkeep
+!psd-annotate/output/.gitkeep
 psd-annotate/test_output
 psd-annotate/test_ai_mcp_rebuild.py
 psd-annotate/.playwright-cli
