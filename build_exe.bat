@@ -8,7 +8,12 @@ rem       so the console window stays open and errors stay readable.
 setlocal
 cd /d "%~dp0psd-annotate"
 
-rem pip mirror for faster download in China; change to https://pypi.org/simple if needed
+rem UTF-8 console codepage: keeps pip/PyInstaller output (Chinese paths etc.) readable.
+rem NOTE: this file must stay ASCII-only; the codepage only affects runtime rendering.
+chcp 65001 >nul
+
+rem China acceleration: default to Tsinghua pip mirror for faster downloads;
+rem change to https://pypi.org/simple if the mirror is unavailable.
 set "PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple"
 
 echo [check] checking Python environment ...
@@ -35,11 +40,16 @@ echo [build] upgrading pip ...
 if errorlevel 1 echo [warn] pip upgrade failed, continuing with existing pip.
 
 rem 3. download & install dependencies: requirements.txt (flask/psd-tools/pillow/mcp/aggdraw) + pyinstaller
-echo [build] installing dependencies (flask, psd-tools, pillow, mcp, pyinstaller) ...
+rem    China acceleration: Tsinghua mirror first, auto-fallback to official PyPI on failure
+echo [build] installing dependencies from mirror: %PIP_INDEX% ...
 .venv-build\Scripts\python.exe -m pip install -q -r ..\requirements.txt pyinstaller -i %PIP_INDEX%
 if errorlevel 1 (
-    echo [error] dependency install failed. Check network or change PIP_INDEX in this script.
-    goto :fail
+    echo [warn] mirror install failed, retrying with official PyPI ...
+    .venv-build\Scripts\python.exe -m pip install -q -r ..\requirements.txt pyinstaller
+    if errorlevel 1 (
+        echo [error] dependency install failed on both mirror and official PyPI.
+        goto :fail
+    )
 )
 
 rem 4. verify deps importable (catch missing packages before building)
