@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import sys
 import threading
 import time
 import uuid
@@ -16,9 +17,32 @@ from xml.sax.saxutils import escape as _sax_escape
 from PIL import Image
 from psd_tools import PSDImage
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
-OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+
+def _resolve_dirs():
+    """计算资源目录与数据目录（兼容源码运行与 PyInstaller 打包两种环境）。
+
+    功能：源码环境下两目录相同（本文件所在目录）；PyInstaller 打包后
+    只读资源（static/index.html）解压在临时目录 sys._MEIPASS，
+    可写数据（uploads/output）则必须放在 exe 同级目录，避免写入临时目录导致数据丢失。
+
+    参数：无。
+    返回值：(资源目录, 数据目录) 二元组，均为绝对路径。
+    """
+    if getattr(sys, "frozen", False):  # PyInstaller 打包环境
+        res_dir = getattr(sys, "_MEIPASS",
+                          os.path.dirname(os.path.abspath(sys.executable)))
+        data_dir = os.path.dirname(os.path.abspath(sys.executable))
+    else:  # 源码运行环境
+        base = os.path.dirname(os.path.abspath(__file__))
+        res_dir = data_dir = base
+    return res_dir, data_dir
+
+
+# 资源目录：只读文件（static/index.html）所在目录，供 app.py 拼接静态资源路径
+# 数据目录：可写文件（uploads/output）所在目录，打包后为 exe 同级目录
+BASE_DIR, DATA_DIR = _resolve_dirs()
+UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
+OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -296,15 +320,19 @@ def export_layer_crop(doc_id, layer_id):
         raise ValueError(f"图层不存在: {layer_id}")
     comp_path = os.path.join(doc_dir(doc_id), "composite.png")
     try:
-        img = Image.open(comp_path)
+        # with 保证文件句柄确定性释放（正常路径 load 后 Pillow 会自动关闭，
+        # 但异常路径下句柄会滞留到 GC，Windows 上还会阻塞文件删除）
+        with Image.open(comp_path) as img:
+            l, t, r, b = node["bbox"]
+            cl, ct = max(0, l), max(0, t)
+            cr, cb = min(img.width, r), min(img.height, b)
+            if cr <= cl or cb <= ct:
+                raise ValueError(f"图层 {node['name']} 完全在画布外，无可裁剪内容")
+            crop = img.crop((cl, ct, cr, cb))
+    except ValueError:
+        raise
     except Exception:
         raise ValueError(f"文档 {doc_id} 未生成合成图，请重新解析")
-    l, t, r, b = node["bbox"]
-    cl, ct = max(0, l), max(0, t)
-    cr, cb = min(img.width, r), min(img.height, b)
-    if cr <= cl or cb <= ct:
-        raise ValueError(f"图层 {node['name']} 完全在画布外，无可裁剪内容")
-    crop = img.crop((cl, ct, cr, cb))
     cache = os.path.join(doc_dir(doc_id), "crops")
     os.makedirs(cache, exist_ok=True)
     p = os.path.join(cache, f"{layer_id}.png")
@@ -555,12 +583,13 @@ def _render_page_body(doc_id, nodes, parent_left, parent_top, page, layout, rule
                 path = None  # 无可渲染像素（如空组/纯调整层），跳过该图层
             if path is None:
                 continue
-            img = Image.open(path)
-            alpha_box = img.getbbox()  # 非零像素包围盒，裁掉透明边得到最小切图
-            if not alpha_box:
-                continue  # 整层全透明，跳过
-            buf = io.BytesIO()
-            img.crop(alpha_box).save(buf, "PNG")
+            # with 保证文件句柄确定性释放（异常路径下句柄会滞留到 GC）
+            with Image.open(path) as img:
+                alpha_box = img.getbbox()  # 非零像素包围盒，裁掉透明边得到最小切图
+                if not alpha_box:
+                    continue  # 整层全透明，跳过
+                buf = io.BytesIO()
+                img.crop(alpha_box).save(buf, "PNG")
             data = buf.getvalue()
             key = _unique_asset_name(node, used_names)
             src = f'{page["asset_dir"]}/{key}.png'
@@ -852,12 +881,13 @@ def _svg_image_element(doc_id, node, x, y, attrs):
         path = render_layer_png(doc_id, node["id"])
     except ValueError:
         return None  # 无可渲染像素（如空组/纯调整层），跳过
-    img = Image.open(path)
-    box = img.getbbox()  # 非零像素包围盒，裁掉透明边
-    if not box:
-        return None  # 整层全透明，跳过
-    buf = io.BytesIO()
-    img.crop(box).save(buf, "PNG")
+    # with 保证文件句柄确定性释放（异常路径下句柄会滞留到 GC）
+    with Image.open(path) as img:
+        box = img.getbbox()  # 非零像素包围盒，裁掉透明边
+        if not box:
+            return None  # 整层全透明，跳过
+        buf = io.BytesIO()
+        img.crop(box).save(buf, "PNG")
     uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
     tx, ty = x + box[0], y + box[1]
     tw, th = box[2] - box[0], box[3] - box[1]

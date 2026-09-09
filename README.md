@@ -100,6 +100,23 @@ stdio 兜底：也可以让客户端以子进程方式拉起（`command` + `args
 
 配置后即可让 AI 直接解析 PSD、查询图层标注、导出切图。
 
+### Windows 免安装 exe（可选）
+
+在 Windows 机器上把项目打包成单文件 `psd-annotate.exe`，之后双击即可运行、无需安装 Python：
+
+```bat
+build_exe.bat
+```
+
+脚本会自动创建独立构建虚拟环境（`.venv-build`）、安装依赖与 PyInstaller，并按 [psd-annotate.spec](psd-annotate/psd-annotate.spec) 生成 `psd-annotate\dist\psd-annotate.exe`（单文件，首次打包约需几分钟）。
+
+使用说明：
+
+- 把 `psd-annotate.exe` 复制到任意目录，双击运行；控制台窗口显示日志，关闭窗口或 `Ctrl+C` 退出
+- 启动后自动打开浏览器 <http://127.0.0.1:8642>，同时提供网络版 MCP `http://127.0.0.1:8643/mcp`（启动失败会降级，不影响网页版）
+- `uploads/`、`output/` 数据目录生成在 exe 同级目录
+- 前置条件：打包机需安装 Python 3.9+ 并加入 PATH（exe 的最终使用者无需任何环境）
+
 ## HTTP API
 
 | 方法 | 路径 | 说明 |

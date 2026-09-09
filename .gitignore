@@ -31,6 +31,10 @@ MANIFEST
 #   before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# 例外：本项目提交的打包配置
+!psd-annotate/psd-annotate.spec
+# Windows 打包用构建虚拟环境
+.venv-build/
 
 # Installer logs
 pip-log.txt
